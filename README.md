@@ -74,7 +74,7 @@ $ brew install codeskyblue/tap/gohttpserver
 Listen on port 8000 of all interfaces, and enable file uploading.
 
 ```
-$ gohttpserver -r ./ --port 8000 --upload
+$ gohttpserver -r /root --port 8000 --upload --delete --theme=green --title=文件服务器 --auth-type http --auth-http root:root
 ```
 
 Use command `gohttpserver --help` to see more usage.
