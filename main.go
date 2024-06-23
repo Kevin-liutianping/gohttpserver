@@ -33,7 +33,6 @@ type Configure struct {
 	HTTPAuth        string   `yaml:"httpauth"`
 	Cert            string   `yaml:"cert"`
 	Key             string   `yaml:"key"`
-	Cors            bool     `yaml:"cors"`
 	Theme           string   `yaml:"theme"`
 	XHeaders        bool     `yaml:"xheaders"`
 	Upload          bool     `yaml:"upload"`
@@ -49,6 +48,8 @@ type Configure struct {
 		ID     string `yaml:"id"`     // for oauth2
 		Secret string `yaml:"secret"` // for oauth2
 	} `yaml:"auth"`
+	DeepPathMaxDepth int  `yaml:"deep-path-max-depth"`
+	NoIndex          bool `yaml:"no-index"`
 }
 
 type httpLogger struct{}
@@ -99,6 +100,8 @@ func parseFlags() error {
 	gcfg.Auth.OpenID = defaultOpenID
 	gcfg.GoogleTrackerID = "UA-81205425-2"
 	gcfg.Title = "Go HTTP File Server"
+	gcfg.DeepPathMaxDepth = 5
+	gcfg.NoIndex = false
 
 	kingpin.HelpFlag.Short('h')
 	kingpin.Version(versionMessage())
@@ -116,11 +119,12 @@ func parseFlags() error {
 	kingpin.Flag("upload", "enable upload support").BoolVar(&gcfg.Upload)
 	kingpin.Flag("delete", "enable delete support").BoolVar(&gcfg.Delete)
 	kingpin.Flag("xheaders", "used when behide nginx").BoolVar(&gcfg.XHeaders)
-	kingpin.Flag("cors", "enable cross-site HTTP request").BoolVar(&gcfg.Cors)
 	kingpin.Flag("debug", "enable debug mode").BoolVar(&gcfg.Debug)
 	kingpin.Flag("plistproxy", "plist proxy when server is not https").Short('p').StringVar(&gcfg.PlistProxy)
 	kingpin.Flag("title", "server title").StringVar(&gcfg.Title)
 	kingpin.Flag("google-tracker-id", "set to empty to disable it").StringVar(&gcfg.GoogleTrackerID)
+	kingpin.Flag("deep-path-max-depth", "set to -1 to not combine dirs").IntVar(&gcfg.DeepPathMaxDepth)
+	kingpin.Flag("no-index", "disable indexing").BoolVar(&gcfg.NoIndex)
 
 	kingpin.Parse() // first parse conf
 
@@ -148,6 +152,19 @@ func fixPrefix(prefix string) string {
 	return prefix
 }
 
+func cors(next http.Handler) http.Handler {
+	// access control and CORS middleware
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+		if r.Method == "OPTIONS" {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	if err := parseFlags(); err != nil {
 		log.Fatal(err)
@@ -164,7 +181,7 @@ func main() {
 		log.Printf("url prefix: %s", gcfg.Prefix)
 	}
 
-	ss := NewHTTPStaticServer(gcfg.Root)
+	ss := NewHTTPStaticServer(gcfg.Root, gcfg.NoIndex)
 	ss.Prefix = gcfg.Prefix
 	ss.Theme = gcfg.Theme
 	ss.Title = gcfg.Title
@@ -172,6 +189,7 @@ func main() {
 	ss.Upload = gcfg.Upload
 	ss.Delete = gcfg.Delete
 	ss.AuthType = gcfg.Auth.Type
+	ss.DeepPathMaxDepth = gcfg.DeepPathMaxDepth
 
 	if gcfg.PlistProxy != "" {
 		u, err := url.Parse(gcfg.PlistProxy)
@@ -206,9 +224,8 @@ func main() {
 	}
 
 	// CORS
-	if gcfg.Cors {
-		hdlr = handlers.CORS()(hdlr)
-	}
+	hdlr = cors(hdlr)
+
 	if gcfg.XHeaders {
 		hdlr = handlers.ProxyHeaders(hdlr)
 	}
